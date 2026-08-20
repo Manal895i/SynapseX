@@ -83,3 +83,11 @@ ADEIP aims to help transform fragmented evidence into structured and explainable
                          │
                          ▼
                    Draft Report
+
+
+
+
+
+
+
+                   
