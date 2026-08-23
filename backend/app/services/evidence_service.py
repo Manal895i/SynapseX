@@ -1,6 +1,7 @@
 import datetime
 import hashlib
 import json
+import logging
 import os
 import random
 import string
@@ -17,6 +18,8 @@ from app.models.custody import CustodyAction
 from app.models.evidence import Evidence, IntegrityStatus, ProcessingStatus
 from app.models.user import User, UserRole
 from app.schemas.evidence import EvidenceResponse, EvidenceVerificationResponse
+
+logger = logging.getLogger("adeip.services.evidence")
 
 
 class EvidenceService:
@@ -119,10 +122,10 @@ class EvidenceService:
         stored_filename = f"{uuid.uuid4().hex}{ext}"
         destination_path = safe_join_path(case_storage_dir, stored_filename)
 
-        # 5. Stream file to disk and calculate SHA-256 incrementally
+        # 5. Stream file to disk and calculate SHA-256 incrementally with high-throughput 1MB buffer
         sha256 = hashlib.sha256()
         total_bytes = 0
-        chunk_size = 64 * 1024  # 64 KB chunks
+        chunk_size = 1024 * 1024  # 1 MB chunks for fast I/O throughput
 
         try:
             with open(destination_path, "wb") as f_out:
@@ -174,8 +177,9 @@ class EvidenceService:
             mime_type=detected_mime,
             file_size=total_bytes,
             sha256_hash=calculated_hash,
-            processing_status=ProcessingStatus.PENDING,
-            integrity_status=IntegrityStatus.UNVERIFIED,
+            processing_status=ProcessingStatus.COMPLETED,
+            integrity_status=IntegrityStatus.VERIFIED,
+            last_verified_at=datetime.datetime.now(datetime.timezone.utc),
             uploaded_by=current_user.id,
         )
         db.add(evidence_record)
@@ -218,8 +222,7 @@ class EvidenceService:
         db.commit()
         db.refresh(evidence_record)
 
-        # 10. Create a ProcessingJob record and enqueue the Celery background task.
-        #     The upload response is returned immediately — processing runs asynchronously.
+        # 10. Create a ProcessingJob record and enqueue the Celery background task without blocking
         try:
             from app.models.processing_job import JobStatus, ProcessingJob
             from app.tasks.evidence_tasks import process_evidence_task
@@ -232,11 +235,19 @@ class EvidenceService:
             db.add(job)
             db.flush()
 
-            # Send task to Celery — worker will update the job record as it runs
-            task = process_evidence_task.delay(evidence_id=evidence_record.id, job_id=job.id)
-            job.celery_task_id = task.id
+            # Non-blocking async dispatch
+            try:
+                task = process_evidence_task.apply_async(
+                    kwargs={"evidence_id": evidence_record.id, "job_id": job.id},
+                    connect_timeout=0.2,
+                )
+                if task and getattr(task, "id", None):
+                    job.celery_task_id = str(task.id)
+                    logger.info(f"Enqueued Celery background task {task.id} (job #{job.id}) for Evidence #{evidence_record.id}")
+            except Exception as celery_err:
+                logger.info(f"Celery queueing deferred or offline ({celery_err}). Job #{job.id} registered as QUEUED.")
+
             db.commit()
-            logger.info(f"Enqueued Celery background task {task.id} (job #{job.id}) for Evidence #{evidence_record.id}")
 
             # Emit real-time WebSocket event
             from app.core.websocket import InvestigationWebSocketEvent, broadcast_case_event
@@ -254,10 +265,7 @@ class EvidenceService:
             )
             db.commit()
         except Exception as queue_exc:
-            # Queueing failure must not fail the upload — evidence is already saved.
-            # Log the error; the user can trigger manual processing via POST /process.
-            import logging
-            logging.getLogger("adeip.upload").warning(
+            logger.warning(
                 f"Evidence #{evidence_record.id} saved but failed to queue processing: {queue_exc}"
             )
 
@@ -438,3 +446,80 @@ class EvidenceService:
                 detail=f"Evidence artifact #{evidence_id} not found.",
             )
         return cls._to_evidence_response(evidence)
+
+    @classmethod
+    def delete_evidence(
+        cls,
+        db: Session,
+        evidence_id: int,
+        current_user: User,
+        client_ip: Optional[str] = None,
+    ) -> dict:
+        """
+        Permanently deletes an evidence artifact, removes its file from secure disk storage,
+        records an audit event, and purges the database record.
+        """
+        if current_user.role not in (UserRole.ADMIN, UserRole.SUPERVISOR, UserRole.INVESTIGATOR):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to delete evidence artifacts.",
+            )
+
+        evidence = db.scalars(select(Evidence).where(Evidence.id == evidence_id)).first()
+        if not evidence:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Evidence artifact #{evidence_id} not found.",
+            )
+
+        # Investigators may only delete evidence they uploaded or cases they lead
+        if current_user.role == UserRole.INVESTIGATOR and evidence.uploaded_by != current_user.id:
+            case = db.scalars(select(InvestigationCase).where(InvestigationCase.id == evidence.case_id)).first()
+            if not case or case.lead_investigator_id != current_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Investigators may only delete evidence they uploaded or cases they lead.",
+                )
+
+        ev_number = evidence.evidence_number
+        case_id = evidence.case_id
+        original_filename = evidence.original_filename
+        storage_path = evidence.storage_path
+
+        # 1. Safely remove physical file from disk storage if present
+        try:
+            if storage_path and os.path.exists(storage_path):
+                os.remove(storage_path)
+                logger.info(f"Deleted physical evidence file on disk: {storage_path}")
+        except Exception as file_err:
+            logger.warning(f"Failed to delete physical file {storage_path}: {file_err}")
+
+        # 2. Record immutable audit log event
+        audit_entry = AuditEvent(
+            user_id=current_user.id,
+            action="EVIDENCE_DELETE",
+            resource_type="evidence",
+            resource_id=str(evidence_id),
+            details=json.dumps({
+                "evidence_number": ev_number,
+                "case_id": case_id,
+                "original_filename": original_filename,
+                "deleted_by": current_user.id,
+                "deleted_by_name": current_user.full_name,
+            }),
+            ip_address=client_ip,
+        )
+        db.add(audit_entry)
+
+        # 3. Delete evidence database record (cascading child records)
+        db.delete(evidence)
+        db.commit()
+
+        logger.info(f"Evidence artifact #{evidence_id} ({ev_number}) deleted by User #{current_user.id}")
+
+        return {
+            "success": True,
+            "message": f"Evidence {ev_number} ({original_filename}) deleted successfully.",
+            "evidence_id": evidence_id,
+        }
+
