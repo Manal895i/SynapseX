@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
+import { useAuth } from '../../context/AuthContext'
 import {
   Menu,
   PanelLeftClose,
@@ -34,17 +35,33 @@ const ALERT_COUNT = 3
 
 function LiveClock() {
   const [time, setTime] = useState(() => new Date())
+  const [mode, setMode] = useState('IST')
 
-  useState(() => {
+  useEffect(() => {
     const interval = setInterval(() => setTime(new Date()), 1000)
     return () => clearInterval(interval)
-  })
+  }, [])
+
+  const timeStr = mode === 'IST'
+    ? time.toLocaleTimeString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    : time.toUTCString().slice(17, 25)
 
   return (
-    <div className="header-clock">
+    <div
+      className="header-clock"
+      onClick={() => setMode(m => m === 'IST' ? 'UTC' : 'IST')}
+      title={`Click to toggle timezone (Current: ${mode === 'IST' ? 'Indian Standard Time (IST / UTC+5:30)' : 'Coordinated Universal Time (UTC)'})`}
+      style={{ cursor: 'pointer', userSelect: 'none' }}
+    >
       <Clock size={12} />
-      <span>{time.toUTCString().slice(17, 25)}</span>
-      <span className="clock-label">UTC</span>
+      <span>{timeStr}</span>
+      <span className="clock-label">{mode}</span>
     </div>
   )
 }
@@ -54,6 +71,10 @@ export default function Header({ collapsed, onToggleSidebar, onMobileMenu, onOpe
   const page = PAGE_TITLES[pathname] || { title: 'SynapseX', subtitle: 'Autonomous Digital Evidence Intelligence Platform' }
   const [searchFocused, setSearchFocused] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const { user: currentUser, logout } = useAuth()
+
+
 
   return (
     <header className="app-header">
@@ -174,15 +195,46 @@ export default function Header({ collapsed, onToggleSidebar, onMobileMenu, onOpe
         </div>
 
         {/* User Menu */}
-        <button className="header-user-btn" id="user-menu-btn" aria-label="User menu">
-          <div className="header-avatar">SA</div>
-          <div className="header-user-info desktop-only">
-            <span className="header-user-name">Sr. Analyst</span>
-            <span className="header-user-role">TS/SCI</span>
-          </div>
-          <ChevronDown size={12} className="desktop-only" style={{ color: 'var(--gray-500)' }} />
-        </button>
+        <div style={{ position: 'relative' }}>
+          <button
+            className="header-user-btn"
+            id="user-menu-btn"
+            aria-label="User menu"
+            onClick={() => setUserMenuOpen(o => !o)}
+          >
+            <div className="header-avatar">{currentUser?.full_name ? currentUser.full_name.slice(0, 2).toUpperCase() : 'SA'}</div>
+            <div className="header-user-info desktop-only">
+              <span className="header-user-name">{currentUser?.full_name || 'Sr. Analyst'}</span>
+              <span className="header-user-role">{currentUser?.role?.toUpperCase() || 'INVESTIGATOR'}</span>
+            </div>
+            <ChevronDown size={12} className="desktop-only" style={{ color: 'var(--gray-500)' }} />
+          </button>
+
+          {userMenuOpen && (
+            <div className="notif-dropdown" style={{ width: 240, right: 0 }}>
+              <div className="notif-header">
+                <span className="notif-title">Authenticated Identity</span>
+                <span className="badge badge--info">{currentUser?.role || 'Investigator'}</span>
+              </div>
+              <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))' }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{currentUser?.full_name || 'Lead Investigator'}</p>
+                <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-secondary)' }}>{currentUser?.email || 'analyst@adeip.local'}</p>
+              </div>
+              <div
+                className="notif-footer"
+                style={{ cursor: 'pointer', textAlign: 'center' }}
+                onClick={() => {
+                  logout()
+                }}
+              >
+                Sign Out / End Session
+              </div>
+
+            </div>
+          )}
+        </div>
       </div>
     </header>
   )
 }
+
