@@ -6,136 +6,24 @@ import {
   Usb, Monitor, Lock, Video, FileSearch,
   Network, CheckCircle2, CircleDot, Zap,
   TrendingUp, Eye, Search, Activity,
-  FlaskConical, Link2, ListChecks
+  FlaskConical, Link2, ListChecks, RefreshCw, FolderOpen,
 } from 'lucide-react'
+import { api } from '../services/api'
+import { LoadingView, ErrorView, EmptyStateView } from '../components/common/StateViews'
 import './Dashboard.css'
 
-/* ─────────────────────────────────────────
-   MOCK DATA
-───────────────────────────────────────── */
-const CASE = {
-  id: 'CASE-2026-001',
-  name: 'Suspected Data Exfiltration',
-  classification: 'CONFIDENTIAL',
-  tlp: 'TLP:RED',
-  opened: '2026-08-20T08:00:00Z',
-  lead: 'Sr. Analyst',
-  status: 'active',
+const SOURCE_ICONS = {
+  'cctv':           Video,
+  'access':         Lock,
+  'system':         Monitor,
+  'usb':            Usb,
+  'file':           FileSearch,
+  'network':        Network,
+  'log_entry':      FileSearch,
+  'auth_event':     ShieldAlert,
+  'file_operation': FileSearch,
+  'network_connection': Network,
 }
-
-const SUMMARY_CARDS = [
-  {
-    id: 'active-evidence',
-    label: 'Active Evidence',
-    value: '1,248',
-    unit: 'Items',
-    icon: HardDrive,
-    color: 'blue',
-    delta: '+14 today',
-    trend: 'up',
-  },
-  {
-    id: 'ai-findings',
-    label: 'AI Findings',
-    value: '12',
-    unit: 'Findings',
-    icon: Brain,
-    color: 'cyan',
-    delta: '+3 new',
-    trend: 'up',
-  },
-  {
-    id: 'risk-level',
-    label: 'Investigation Risk',
-    value: 'Medium',
-    unit: '',
-    icon: ShieldAlert,
-    color: 'medium',
-    delta: 'Escalating',
-    trend: 'up',
-  },
-  {
-    id: 'agent-status',
-    label: 'Agent Status',
-    value: '8 / 10',
-    unit: 'Active',
-    icon: Bot,
-    color: 'green',
-    delta: '2 idle',
-    trend: 'flat',
-  },
-]
-
-const TIMELINE_EVENTS = [
-  {
-    id: 'e1',
-    time: '10:02',
-    source: 'CCTV',
-    label: 'Person entered restricted area',
-    icon: Video,
-    type: 'suspicious',
-    detail: 'CAM-07 · Server Room B · Badge ID not matched',
-  },
-  {
-    id: 'e2',
-    time: '10:03',
-    source: 'Access Control',
-    label: 'Door opened — Server Room B',
-    icon: Lock,
-    type: 'suspicious',
-    detail: 'Credential: EMP-4421 · Tailgating alert triggered',
-  },
-  {
-    id: 'e3',
-    time: '10:04',
-    source: 'System',
-    label: 'User login on WKST-041',
-    icon: Monitor,
-    type: 'normal',
-    detail: 'User: jsmith@corp.int · IP: 10.4.12.41',
-  },
-  {
-    id: 'e4',
-    time: '10:05',
-    source: 'USB',
-    label: 'External device connected',
-    icon: Usb,
-    type: 'critical',
-    detail: 'Device: SanDisk Ultra 128GB · S/N: SDCZ48-128G · Unregistered',
-  },
-  {
-    id: 'e5',
-    time: '10:07',
-    source: 'File Activity',
-    label: 'Sensitive files accessed',
-    icon: FileSearch,
-    type: 'critical',
-    detail: '34 files · /Finance/Q2-Projections/ · 2.1 GB read',
-  },
-  {
-    id: 'e6',
-    time: '10:09',
-    source: 'Network',
-    label: 'Large outbound data transfer',
-    icon: Network,
-    type: 'critical',
-    detail: '1.8 GB → 185.220.101.47 (TOR Exit Node) · Protocol: HTTPS',
-  },
-]
-
-const AI_FINDINGS = [
-  { label: 'Correlated sequence detected',      icon: Link2,      color: 'blue',   value: 'Physical → Digital → Exfil' },
-  { label: 'Confidence Level',                  icon: FlaskConical, color: 'medium', value: 'Medium (67%)' },
-  { label: 'Supporting Evidence',               icon: CheckCircle2, color: 'green',  value: '5 artifacts correlated' },
-  { label: 'Alternative Explanations',          icon: CircleDot,  color: 'gray',   value: '2 hypotheses flagged' },
-  { label: 'Missing Evidence Recommendations',  icon: ListChecks, color: 'cyan',   value: '3 gaps identified' },
-]
-
-const RECENT_ALERTS = [
-  { severity: 'critical', msg: 'TOR exit node detected in outbound traffic', time: '10:09' },
-  { severity: 'high',     msg: 'Unregistered USB device write operation',    time: '10:05' },
-  { severity: 'medium',   msg: 'Tailgating detected at access control point',time: '10:03' },
-]
 
 /* ─────────────────────────────────────────
    LIVE CLOCK
@@ -146,10 +34,25 @@ function LiveClock() {
     const t = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
+
+  const istStr = now.toLocaleDateString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
+  const istTimeStr = now.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+
   return (
-    <span className="case-clock">
+    <span className="case-clock" title="Indian Standard Time (IST / UTC+5:30)">
       <Clock size={11} />
-      {now.toUTCString().slice(5, 25)} UTC
+      {istStr} {istTimeStr} IST
     </span>
   )
 }
@@ -188,30 +91,30 @@ function SummaryCard({ card }) {
 ───────────────────────────────────────── */
 function TimelineEvent({ event, index }) {
   const [expanded, setExpanded] = useState(false)
-  const Icon = event.icon
+  const Icon = SOURCE_ICONS[event.source] || SOURCE_ICONS[event.type] || Activity
 
   return (
     <div
-      className={`tl-event tl-event--${event.type} ${expanded ? 'tl-event--expanded' : ''}`}
+      className={`tl-event tl-event--${event.type || 'normal'} ${expanded ? 'tl-event--expanded' : ''}`}
       style={{ animationDelay: `${index * 80}ms` }}
       onClick={() => setExpanded(e => !e)}
       id={`event-${event.id}`}
     >
       <div className="tl-time-col">
         <span className="tl-time">{event.time}</span>
-        <div className={`tl-dot tl-dot--${event.type}`} />
+        <div className={`tl-dot tl-dot--${event.type || 'normal'}`} />
       </div>
 
-      <div className="tl-connector">
+      <div className="tl-line-connector">
         <div className="tl-line" />
       </div>
 
-      <div className="tl-body">
-        <div className="tl-row">
-          <div className={`tl-source-badge tl-source-badge--${event.type}`}>
-            <Icon size={11} strokeWidth={2} />
+      <div className="tl-card">
+        <div className="tl-card-header">
+          <span className={`tl-source-badge tl-source-badge--${event.type || 'normal'}`}>
+            <Icon size={10} strokeWidth={2} />
             {event.source}
-          </div>
+          </span>
           {event.type === 'critical' && (
             <span className="tl-flag tl-flag--critical">
               <AlertTriangle size={9} /> SUSPICIOUS
@@ -223,101 +126,206 @@ function TimelineEvent({ event, index }) {
             </span>
           )}
         </div>
-        <p className="tl-label">{event.label}</p>
-        {expanded && (
-          <div className="tl-detail">
-            <span className="tl-detail-text">{event.detail}</span>
-          </div>
-        )}
-        {!expanded && (
-          <span className="tl-expand-hint">Click to expand ›</span>
+
+        <p className="tl-card-label">{event.label}</p>
+
+        {event.detail && (
+          <p className="tl-card-detail">{event.detail}</p>
         )}
       </div>
     </div>
   )
 }
 
-/* ─────────────────────────────────────────
+/* ═════════════════════════════════════════
    MAIN DASHBOARD
-───────────────────────────────────────── */
+═════════════════════════════════════════ */
 export default function Dashboard() {
   const navigate = useNavigate()
-  const [pulse, setPulse] = useState(0)
 
-  // Simulate live pulse counter
+  const [casesList, setCasesList] = useState([])
+  const [selectedCaseId, setSelectedCaseId] = useState('')
+  const [dashboardData, setDashboardData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  const fetchDashboard = useCallback(async (caseId) => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      // Fetch case list first
+      const casesRes = await api.cases.list({ pageSize: 50 })
+      const cases = casesRes?.items || []
+      setCasesList(cases)
+
+      if (cases.length === 0) {
+        setDashboardData(null)
+        setLoading(false)
+        return
+      }
+
+      const activeId = caseId || selectedCaseId || cases[0].id
+      setSelectedCaseId(activeId)
+
+      const dash = await api.cases.getDashboard(activeId)
+      setDashboardData(dash)
+    } catch (err) {
+      setError(err.message || 'Failed to load dashboard telemetry from backend.')
+    } finally {
+      setLoading(false)
+    }
+  }, [selectedCaseId])
+
   useEffect(() => {
-    const t = setInterval(() => setPulse(p => p + 1), 4000)
-    return () => clearInterval(t)
+    fetchDashboard()
   }, [])
+
+  const handleCaseChange = (e) => {
+    const newId = e.target.value
+    setSelectedCaseId(newId)
+    fetchDashboard(newId)
+  }
+
+  if (loading) {
+    return (
+      <div className="dash-root" style={{ padding: 40 }}>
+        <LoadingView message="Loading investigation telemetry and case metrics..." />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="dash-root" style={{ padding: 40 }}>
+        <ErrorView error={error} onRetry={() => fetchDashboard(selectedCaseId)} message="Dashboard API Error" />
+      </div>
+    )
+  }
+
+  if (casesList.length === 0) {
+    return (
+      <div className="dash-root" style={{ padding: 40 }}>
+        <EmptyStateView
+          title="No investigation cases have been created."
+          message="Initialize an authorized investigation case to view live forensic telemetry, evidence processing, and AI reasoning."
+          icon={FolderOpen}
+          actionText="Create Investigation Case"
+          onAction={() => navigate('/investigations')}
+        />
+      </div>
+    )
+  }
+
+  const riskScore = dashboardData?.risk_score ?? 0
+  const riskColor = riskScore >= 80 ? 'critical' : riskScore >= 60 ? 'high' : riskScore >= 30 ? 'medium' : 'low'
+
+  const summaryCards = [
+    {
+      id: 'active-evidence',
+      label: 'Evidence Artifacts',
+      value: (dashboardData?.total_evidence ?? 0).toLocaleString(),
+      unit: 'Items',
+      icon: HardDrive,
+      color: 'blue',
+      delta: `${dashboardData?.processed_evidence ?? 0} verified`,
+      trend: 'up',
+    },
+    {
+      id: 'ai-findings',
+      label: 'AI Findings',
+      value: (dashboardData?.total_findings ?? 0).toString(),
+      unit: 'Findings',
+      icon: Brain,
+      color: 'cyan',
+      delta: `${dashboardData?.pending_findings ?? 0} pending review`,
+      trend: 'up',
+    },
+    {
+      id: 'risk-level',
+      label: 'Investigation Risk',
+      value: dashboardData?.risk_level || 'Low',
+      unit: `(${riskScore}%)`,
+      icon: ShieldAlert,
+      color: riskColor,
+      delta: riskScore >= 60 ? 'Elevated' : 'Stable',
+      trend: riskScore >= 60 ? 'up' : 'flat',
+    },
+    {
+      id: 'agent-status',
+      label: 'Correlations Discovered',
+      value: (dashboardData?.total_correlations ?? 0).toString(),
+      unit: 'Signals',
+      icon: Bot,
+      color: 'green',
+      delta: `${dashboardData?.total_entities ?? 0} entities`,
+      trend: 'flat',
+    },
+  ]
+
+  const timelineEvents = dashboardData?.latest_events || []
+  const findingsList = dashboardData?.recent_findings || []
 
   return (
     <div className="dash-root">
 
       {/* ═══════════════════════════════
-          PAGE HEADER
+          CASE SELECTOR & BANNER
       ═══════════════════════════════ */}
-      <div className="dash-page-header">
-        <div className="dash-header-left">
-          <div className="dash-header-eyebrow">
-            <Zap size={12} className="eyebrow-icon" />
-            <span>Intelligence Dashboard</span>
-            <span className="eyebrow-sep" />
-            <Activity size={11} />
-            <span className="eyebrow-live">Live Monitoring Active</span>
-          </div>
-          <h1 className="dash-page-title">
-            Investigation Intelligence Dashboard
-          </h1>
-          <p className="dash-page-sub">
-            Real-time analysis and AI-assisted correlation for active digital investigation
-          </p>
-        </div>
-        <div className="dash-header-right">
-          <LiveClock />
-          <div className="dash-live-indicator">
-            <span className="pulse-dot" />
-            <span>Auto-refresh</span>
-          </div>
-        </div>
-      </div>
-
-      {/* ═══════════════════════════════
-          CASE BANNER
-      ═══════════════════════════════ */}
-      <div className="case-banner">
+      <div className="case-banner" id="case-banner">
         <div className="case-banner-left">
-          <div className="case-id-row">
-            <span className="case-id-badge">{CASE.id}</span>
-            <span className="case-tlp">{CASE.tlp}</span>
-            <span className="case-class">{CASE.classification}</span>
+          <div className="case-badge-row">
+            <span className="case-badge case-badge--primary">{dashboardData?.case_number || `CASE-${selectedCaseId}`}</span>
+            <span className="case-badge case-badge--confidential">AUTHORIZED ACCESS</span>
+            <span className="case-badge case-badge--tlp">TLP:AMBER</span>
+            <LiveClock />
           </div>
-          <div className="case-name">{CASE.name}</div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4 }}>
+            <h1 className="case-title">{dashboardData?.case_title || 'Investigation Case'}</h1>
+            {casesList.length > 1 && (
+              <select
+                value={selectedCaseId}
+                onChange={handleCaseChange}
+                style={{
+                  background: 'rgba(15, 23, 42, 0.8)',
+                  color: '#fff',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: 6,
+                  padding: '4px 8px',
+                  fontSize: 12,
+                }}
+              >
+                {casesList.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.case_number || `CASE-${c.id}`} — {c.title}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
           <div className="case-meta-row">
             <span className="case-meta-item">
-              <Eye size={11} /> Lead: {CASE.lead}
-            </span>
-            <span className="case-meta-sep" />
-            <span className="case-meta-item">
-              <Clock size={11} /> Opened: 2026-08-20 08:00 UTC
+              <Activity size={11} /> Status: <strong>{dashboardData?.total_evidence ? 'Active Investigation' : 'Awaiting Evidence'}</strong>
             </span>
           </div>
         </div>
+
         <div className="case-banner-right">
           <div className="case-status-wrap">
             <span className="badge badge--active">
               <span className="pulse-dot" style={{ width: 6, height: 6 }} />
-              ACTIVE
+              LIVE TELEMETRY
             </span>
           </div>
-          <div className="case-alerts-mini">
-            {RECENT_ALERTS.map((a, i) => (
-              <div key={i} className={`case-alert-mini case-alert-mini--${a.severity}`}>
-                <AlertTriangle size={10} />
-                <span>{a.msg}</span>
-                <span className="cam-time">{a.time}</span>
-              </div>
-            ))}
-          </div>
+          <button
+            className="ai-btn ai-btn--secondary"
+            onClick={() => fetchDashboard(selectedCaseId)}
+            style={{ padding: '6px 12px', fontSize: 12 }}
+          >
+            <RefreshCw size={12} /> Refresh Data
+          </button>
         </div>
       </div>
 
@@ -325,7 +333,7 @@ export default function Dashboard() {
           SUMMARY CARDS
       ═══════════════════════════════ */}
       <div className="dash-cards-grid">
-        {SUMMARY_CARDS.map(card => (
+        {summaryCards.map(card => (
           <SummaryCard key={card.id} card={card} />
         ))}
       </div>
@@ -340,34 +348,49 @@ export default function Dashboard() {
           <div className="panel-header">
             <div className="panel-title">
               <Activity size={15} />
-              Live Investigation Timeline
+              Reconstructed Events Timeline
             </div>
             <div className="panel-header-right">
               <span className="badge badge--active" style={{ fontSize: 9 }}>
                 <span className="pulse-dot" style={{ width: 5, height: 5 }} />
                 Live
               </span>
-              <span className="panel-event-count">{TIMELINE_EVENTS.length} events</span>
+              <span className="panel-event-count">{timelineEvents.length} events</span>
             </div>
           </div>
 
           <div className="tl-legend">
-            <span className="tl-legend-item tl-legend-item--normal">● Normal</span>
-            <span className="tl-legend-item tl-legend-item--suspicious">● Flagged</span>
-            <span className="tl-legend-item tl-legend-item--critical">● Suspicious</span>
+            <span className="tl-legend-item tl-legend-item--normal">● Standard</span>
+            <span className="tl-legend-item tl-legend-item--critical">● Alert / Suspicious</span>
           </div>
 
           <div className="tl-scroll-area">
-            <div className="tl-track">
-              {TIMELINE_EVENTS.map((evt, i) => (
-                <TimelineEvent key={evt.id} event={evt} index={i} />
-              ))}
-            </div>
+            {timelineEvents.length === 0 ? (
+              <div style={{ padding: '32px 16px' }}>
+                <EmptyStateView
+                  title="No events extracted"
+                  message="Upload and process digital evidence files (CSV, JSON, EVTX, PCAP, MP4) to extract normalized timeline events."
+                  icon={Activity}
+                  actionText="Upload Evidence"
+                  onAction={() => navigate('/evidence')}
+                />
+              </div>
+            ) : (
+              <div className="tl-track">
+                {timelineEvents.map((evt, i) => (
+                  <TimelineEvent key={evt.id || i} event={evt} index={i} />
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="tl-footer">
             <TrendingUp size={11} />
-            <span>Showing events 10:02 – 10:09 · Case window: 7 minutes</span>
+            <span>
+              {timelineEvents.length > 0
+                ? `Showing ${timelineEvents.length} latest events from verified digital evidence artifacts`
+                : 'No evidence events registered yet'}
+            </span>
           </div>
         </div>
 
@@ -376,98 +399,79 @@ export default function Dashboard() {
           <div className="panel-header">
             <div className="panel-title">
               <Brain size={15} />
-              AI Investigation Summary
+              Multi-Agent AI Findings
             </div>
-            <span className="badge badge--info">NEXUS-7</span>
+            <span className="badge badge--info">ADEIP Intelligence</span>
           </div>
 
           {/* Confidence meter */}
           <div className="ai-confidence-block">
             <div className="ai-conf-header">
-              <span className="ai-conf-label">Overall Confidence</span>
-              <span className="ai-conf-value ai-conf-value--medium">Medium — 67%</span>
+              <span className="ai-conf-label">Case Risk Assessment</span>
+              <span className={`ai-conf-value ai-conf-value--${riskColor}`}>
+                {dashboardData?.risk_level || 'Low'} — {riskScore}%
+              </span>
             </div>
             <div className="ai-conf-bar-wrap">
-              <div className="ai-conf-bar ai-conf-bar--medium" style={{ width: '67%' }} />
+              <div className={`ai-conf-bar ai-conf-bar--${riskColor}`} style={{ width: `${riskScore}%` }} />
             </div>
             <p className="ai-conf-desc">
-              NEXUS-7 has identified a high-probability correlated event sequence
-              consistent with an <strong>insider data exfiltration attempt</strong>.
-              Correlation anchored on physical access → system access → data transfer.
+              {dashboardData?.total_correlations
+                ? `Multi-agent correlation engine detected ${dashboardData.total_correlations} cross-source signal clusters across ${dashboardData.total_entities} extracted entities.`
+                : 'Upload digital evidence artifacts to trigger deterministic entity extraction, correlation discovery, and hypothesis reasoning.'}
             </p>
           </div>
 
           {/* Findings list */}
           <div className="ai-findings-list">
-            {AI_FINDINGS.map((f, i) => {
-              const Icon = f.icon
-              return (
-                <div key={i} className={`ai-finding ai-finding--${f.color}`}>
-                  <div className={`ai-finding-icon ai-finding-icon--${f.color}`}>
-                    <Icon size={13} strokeWidth={1.8} />
+            {findingsList.length === 0 ? (
+              <div style={{ padding: '16px 8px' }}>
+                <EmptyStateView
+                  title="No AI findings generated"
+                  message="Run the multi-agent reasoning engine on this case to produce grounded observations and hypotheses."
+                  icon={Brain}
+                  actionText="Run AI Reasoning"
+                  onAction={() => navigate('/ai-findings')}
+                />
+              </div>
+            ) : (
+              findingsList.map((f, i) => (
+                <div key={f.id || i} className="ai-finding ai-finding--cyan">
+                  <div className="ai-finding-icon ai-finding-icon--cyan">
+                    <Brain size={13} strokeWidth={1.8} />
                   </div>
                   <div className="ai-finding-body">
                     <span className="ai-finding-label">{f.label}</span>
                     <span className="ai-finding-value">{f.value}</span>
                   </div>
                 </div>
-              )
-            })}
-          </div>
-
-          {/* Sequence visual */}
-          <div className="ai-sequence">
-            <span className="ai-seq-label">Detected Sequence</span>
-            <div className="ai-seq-chain">
-              {['Physical Access', 'System Login', 'USB Device', 'File Access', 'Exfiltration'].map((s, i) => (
-                <div key={i} className="ai-seq-chain-item">
-                  <div className={`ai-seq-node ${i >= 2 ? 'ai-seq-node--alert' : ''}`}>{i + 1}</div>
-                  <span className="ai-seq-step">{s}</span>
-                  {i < 4 && <ChevronRight size={12} className="ai-seq-arrow" />}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* IOC summary */}
-          <div className="ai-ioc-block">
-            <span className="ai-ioc-title">Key IOCs Identified</span>
-            <div className="ai-ioc-list">
-              <div className="ai-ioc-item">
-                <span className="ai-ioc-type">IP</span>
-                <span className="ai-ioc-val">185.220.101.47</span>
-                <span className="badge badge--critical" style={{ fontSize: 9 }}>TOR</span>
-              </div>
-              <div className="ai-ioc-item">
-                <span className="ai-ioc-type">USER</span>
-                <span className="ai-ioc-val">jsmith@corp.int</span>
-                <span className="badge badge--high" style={{ fontSize: 9 }}>HIGH RISK</span>
-              </div>
-              <div className="ai-ioc-item">
-                <span className="ai-ioc-type">DEVICE</span>
-                <span className="ai-ioc-val">SDCZ48-128G</span>
-                <span className="badge badge--medium" style={{ fontSize: 9 }}>UNREGISTERED</span>
-              </div>
-            </div>
+              ))
+            )}
           </div>
 
           {/* Actions */}
           <div className="ai-actions">
-            <button className="ai-btn ai-btn--primary" id="view-investigation-btn"
-              onClick={() => navigate('/investigations/CASE-2026-001/workspace')}>
+            <button
+              className="ai-btn ai-btn--primary"
+              id="view-investigation-btn"
+              onClick={() => navigate(`/investigations/${selectedCaseId}/workspace`)}
+            >
               <Eye size={14} />
-              View Investigation
+              Open Case Workspace
             </button>
-            <button className="ai-btn ai-btn--secondary" id="review-findings-btn"
-              onClick={() => navigate('/investigations/CASE-2026-001')}>
+            <button
+              className="ai-btn ai-btn--secondary"
+              id="review-findings-btn"
+              onClick={() => navigate('/ai-findings')}
+            >
               <Search size={14} />
-              Review Findings
+              Review AI Findings
             </button>
           </div>
 
           <div className="ai-disclaimer">
             <Brain size={10} />
-            Analysis generated by NEXUS-7 · Last run: {new Date().toLocaleTimeString()} · Model: SynapseX-Forge-v3
+            Deterministic multi-agent pipeline · Grounded in verified evidence hashes · Strict non-guilt policy
           </div>
         </div>
 
