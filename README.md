@@ -86,8 +86,6 @@ ADEIP aims to help transform fragmented evidence into structured and explainable
 
 
 
+🤝 Contributing
 
-
-
-
-                   
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for step-by-step instructions on how to fork, clone, run, develop, and submit pull requests.
