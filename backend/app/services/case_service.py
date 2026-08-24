@@ -289,17 +289,20 @@ class CaseService:
                 .limit(6)
             ).all()
         )
-        latest_events = [
-            {
+        latest_events = []
+        for e in latest_ev_rows:
+            ev_type_str = e.event_type.value if hasattr(e.event_type, "value") else str(e.event_type) if e.event_type else "log_entry"
+            src_str = e.source or ev_type_str
+            label_str = e.entity_value or ev_type_str
+            is_crit = (ev_type_str in ("alert", "auth_event")) or ("critical" in (e.entity_type or "").lower())
+            latest_events.append({
                 "id": f"evt-{e.id}",
                 "time": e.timestamp.strftime("%H:%M") if e.timestamp else "N/A",
-                "source": e.source or e.event_type.value,
-                "label": e.entity_value or e.event_type.value,
-                "type": "critical" if (e.event_type.value in ("alert", "auth_event") or "critical" in (e.entity_type or "").lower()) else "normal",
-                "detail": f"{e.event_type.value} from {e.source}" if e.source else e.event_type.value,
-            }
-            for e in latest_ev_rows
-        ]
+                "source": src_str,
+                "label": label_str,
+                "type": "critical" if is_crit else "normal",
+                "detail": f"{ev_type_str} from {e.source}" if e.source else ev_type_str,
+            })
 
         recent_f_rows = list(
             db.scalars(
@@ -309,15 +312,18 @@ class CaseService:
                 .limit(5)
             ).all()
         )
-        recent_findings = [
-            {
-                "id": f.finding_id,
-                "label": f.title,
-                "value": f"{f.confidence_tier.capitalize()} ({int(f.confidence_score * 100)}%)" if f.confidence_score else "N/A",
-                "status": f.review_status.value,
-            }
-            for f in recent_f_rows
-        ]
+        recent_findings = []
+        for f in recent_f_rows:
+            conf = f.confidence_score if f.confidence_score is not None else 0.85
+            tier = "High" if conf >= 0.8 else ("Medium" if conf >= 0.5 else "Low")
+            pct = int(conf * 100)
+            status_val = f.review_status.value if hasattr(f.review_status, "value") else str(f.review_status)
+            recent_findings.append({
+                "id": f.finding_id or f"finding-{f.id}",
+                "label": f.title or "Investigation Finding",
+                "value": f"{tier} ({pct}%)",
+                "status": status_val,
+            })
 
         return CaseDashboardResponse(
             case_id=case.id,
