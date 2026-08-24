@@ -7,6 +7,7 @@ import {
   Clock, X, ChevronRight, ArrowRight, Share2,
   Sparkles, Layers, FileCode, Tag, Eye,
   SlidersHorizontal, Download, Play, RefreshCw, FolderOpen,
+  Activity,
 } from 'lucide-react'
 import { api } from '../services/api'
 import { LoadingView, ErrorView, EmptyStateView } from '../components/common/StateViews'
@@ -33,13 +34,16 @@ const SOURCE_ICONS = {
 function EventDetailPanel({ event, onClose }) {
   if (!event) return null
   const Icon = SOURCE_ICONS[event.event_type] || SOURCE_ICONS[event.source] || GitBranch
+  const eventId = event.event_id || event.id
+  const eventTs = event.timestamp_utc || event.timestamp
+  const eventTitle = event.description || event.entity_value || event.event_type
 
   return (
     <div className="tl-panel-backdrop" onClick={onClose}>
       <div className="tl-detail-panel" onClick={e => e.stopPropagation()}>
         <div className="tl-dp-header">
           <div className="tl-dp-header-left">
-            <span className="tl-dp-id">Event #{event.id}</span>
+            <span className="tl-dp-id">Event #{eventId}</span>
             <span className="tl-dp-source-tag">
               <Icon size={11} /> {event.source || event.event_type}
             </span>
@@ -55,17 +59,21 @@ function EventDetailPanel({ event, onClose }) {
               <Icon size={20} />
             </div>
             <div>
-              <h2 className="tl-dp-title">{event.entity_value || event.event_type}</h2>
+              <h2 className="tl-dp-title">{eventTitle}</h2>
               <span className="tl-dp-time">
-                <Clock size={11} /> {event.timestamp ? new Date(event.timestamp).toUTCString() : 'Timestamp unavailable'}
+                <Clock size={11} /> {eventTs ? new Date(eventTs).toUTCString() : (event.original_timestamp || 'Timestamp unavailable')}
               </span>
             </div>
           </div>
 
           <div className="tl-dp-section">
-            <span className="tl-dp-sec-lbl">Normalized Entity</span>
+            <span className="tl-dp-sec-lbl">Normalized Entities</span>
             <p className="tl-dp-entity">
-              {event.entity_type ? `${event.entity_type}: ${event.entity_value}` : 'Unmapped entity'}
+              {Array.isArray(event.entities) && event.entities.length > 0
+                ? event.entities.join(', ')
+                : event.entity_type
+                  ? `${event.entity_type}: ${event.entity_value}`
+                  : 'Unmapped entity'}
             </p>
           </div>
 
@@ -77,13 +85,13 @@ function EventDetailPanel({ event, onClose }) {
             </div>
           </div>
 
-          {event.event_metadata && (
+          {(event.metadata || event.event_metadata) && (
             <div className="tl-dp-section">
               <span className="tl-dp-sec-lbl">Raw Event Payload</span>
               <pre className="tl-dp-ai-box" style={{ overflowX: 'auto', fontSize: 11 }}>
-                {typeof event.event_metadata === 'string'
-                  ? event.event_metadata
-                  : JSON.stringify(event.event_metadata, null, 2)}
+                {typeof (event.metadata || event.event_metadata) === 'string'
+                  ? (event.metadata || event.event_metadata)
+                  : JSON.stringify(event.metadata || event.event_metadata, null, 2)}
               </pre>
             </div>
           )}
@@ -126,7 +134,8 @@ export default function Timeline() {
       setSelectedCaseId(activeId)
 
       const res = await api.timeline.getForCase(activeId, { pageSize: 200 })
-      setEvents(res?.events || res?.items || [])
+      const eventList = res?.observed_events || res?.events || res?.items || []
+      setEvents(eventList)
     } catch (err) {
       setError(err.message || 'Failed to reconstruct investigation timeline.')
     } finally {
@@ -149,7 +158,7 @@ export default function Timeline() {
       const q = search.toLowerCase()
       const src = (e.source || '').toLowerCase()
       const type = (e.event_type || '').toLowerCase()
-      const val = (e.entity_value || '').toLowerCase()
+      const val = (e.entity_value || e.description || '').toLowerCase()
 
       const matchesSearch = !search || src.includes(q) || type.includes(q) || val.includes(q)
       const matchesSource = sourceFilter === 'all' || src.includes(sourceFilter) || type.includes(sourceFilter)
@@ -256,12 +265,14 @@ export default function Timeline() {
           <div className="tl-vertical-track">
             {filtered.map((evt, idx) => {
               const Icon = SOURCE_ICONS[evt.event_type] || SOURCE_ICONS[evt.source] || GitBranch
-              const timeStr = evt.timestamp ? new Date(evt.timestamp).toUTCString().slice(17, 25) : 'N/A'
-              const dateStr = evt.timestamp ? new Date(evt.timestamp).toISOString().slice(0, 10) : '—'
+              const ts = evt.timestamp_utc || evt.timestamp
+              const timeStr = ts ? new Date(ts).toUTCString().slice(17, 25) : (evt.original_timestamp ? evt.original_timestamp.slice(11, 19) : 'N/A')
+              const dateStr = ts ? new Date(ts).toISOString().slice(0, 10) : '—'
+              const titleStr = evt.description || evt.entity_value || evt.event_type
 
               return (
                 <div
-                  key={evt.id || idx}
+                  key={evt.event_id || evt.id || idx}
                   className="tl-card-item tl-card-item--normal"
                   onClick={() => setSelectedEvent(evt)}
                 >
@@ -282,7 +293,7 @@ export default function Timeline() {
                         </span>
                       )}
                     </div>
-                    <p className="tl-event-title">{evt.entity_value || evt.event_type}</p>
+                    <p className="tl-event-title">{titleStr}</p>
                     <p className="tl-event-detail">Artifact ID #{evt.evidence_id} · {evt.source}</p>
                   </div>
                 </div>
